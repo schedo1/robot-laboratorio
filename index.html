@@ -65,6 +65,10 @@
   .display .valore.errore { font-size: 1.25rem; color: var(--errore); font-weight: 550; }
   .display .nota { color: var(--tenue); font-size: .9rem; min-height: 1.3em; }
 
+  .timer { display: flex; align-items: center; gap: 12px; background: var(--pannello); border: 1px solid var(--linea); border-radius: 10px; padding: 8px 14px; margin-bottom: 10px; }
+  .timer[hidden] { display: none; }
+  .timer strong { flex: 1; font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+
   .video {
     position: relative;
     background: #000;
@@ -124,6 +128,11 @@
   <div class="nota" id="nota"></div>
 </section>
 
+<div class="timer" id="timerBox" hidden>
+  <span>Timer</span><strong id="timerTempo">00:00</strong>
+  <button type="button" id="btnTimerStop">Annulla</button>
+</div>
+
 <div class="video">
   <video id="video" playsinline muted></video>
   <canvas id="canvas"></canvas>
@@ -150,6 +159,8 @@
     <li>logaritmo di 8 in base 2</li>
     <li>salva dato 42</li>
     <li>elenca dato 0 (zero e' il primo dato salvato)</li>
+    <li>umido (mostra umidit&agrave; e temperatura)</li>
+    <li>metti un timer di 30 secondi (anche minuti) &middot; annulla timer</li>
     <li>Numeri negativi: "meno 5". Decimali: "2,5".</li>
   </ul>
 </details>
@@ -286,6 +297,9 @@ function rispostaEsp32(riga) {
   } else if (p[0] === "E") {
     mostra("elenca dato " + p[1], p[2], "posizione " + p[1]);
     parlato = "Posizione " + p[1] + ": " + p[2].replace(".", ",");
+  } else if (p[0] === "H") {
+    mostra("umidità e temperatura", p[1] + " %", "temperatura " + p[2] + " °C");
+    parlato = "Umidità " + p[1].replace(".", ",") + " percento, temperatura " + p[2].replace(".", ",") + " gradi";
   } else if (p[0] === "X") {
     const m = p.slice(1).join(",");
     mostra(ultimaRichiesta, m, "", true);
@@ -345,6 +359,22 @@ function interpreta(testo) {
   const t = normalizza(testo);
   const numeri = s => s.match(RE_NUM) || [];
 
+  /* timer: si guardano solo i numeri DOPO la parola "timer" ("un timer" diventa "1 timer") */
+  if (/\btimer\b/.test(t)) {
+    if (/\b(annulla|ferma|cancella|spegni|basta)\b/.test(t)) return { annullaTimer: true };
+    const m = t.slice(t.search(/\btimer\b/) + 5).match(/(\d+(?:\.\d+)?)\s*(minut|or[ae]\b)?/);
+    if (!m) return { errore: "Dimmi quanti secondi, per esempio: metti un timer di 30 secondi" };
+    let s = parseFloat(m[1]);
+    if (m[2] === "minut") s *= 60; else if (m[2]) s *= 3600;
+    s = Math.round(s);
+    if (s < 1 || s > 86400) return { errore: "Il timer deve durare da 1 secondo a 24 ore" };
+    return { timer: s };
+  }
+
+  if (/\b(umid\w*|temperatura)\b/.test(t)) {
+    return { messaggio: "H", richiesta: "umidita e temperatura" };
+  }
+
   const iSalva = t.search(/\bsalva\b/);
   if (iSalva >= 0) {
     const n = numeri(t.slice(iSalva));
@@ -397,6 +427,8 @@ function eseguiTesto(testo) {
     parla(r.errore);
     return;
   }
+  if (r.annullaTimer) { fermaTimer(true); mostra("timer", "annullato", ""); parla("Timer annullato"); return; }
+  if (r.timer) { avviaTimer(r.timer); return; }
   ultimaRichiesta = r.richiesta;
   if (!invia(r.messaggio, false)) {
     mostra(r.richiesta, "Collega prima l'ESP32", "", true);
@@ -404,6 +436,43 @@ function eseguiTesto(testo) {
     return;
   }
   mostra(r.richiesta, "...", "in attesa dell'ESP32");
+}
+
+/* ===================== TIMER ===================== */
+let timerFine = 0, timerId = null;
+
+function formatoTempo(s) {
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+function aggiornaTimer() {
+  const resta = Math.max(0, Math.ceil((timerFine - Date.now()) / 1000));
+  $("timerTempo").textContent = formatoTempo(resta);
+  if (Date.now() >= timerFine) scadutoTimer();
+}
+function avviaTimer(secondi) {
+  if (!connesso()) {
+    mostra("timer " + formatoTempo(secondi), "Collega prima l'ESP32", "serve per far suonare il buzzer", true);
+    parla("Collega prima l'ESP32");
+    return;
+  }
+  fermaTimer(false);
+  timerFine = Date.now() + secondi * 1000;
+  $("timerBox").hidden = false;
+  mostra("timer " + formatoTempo(secondi), "avviato", "il buzzer suonerà alla scadenza");
+  aggiornaTimer();
+  timerId = setInterval(aggiornaTimer, 250);
+}
+function fermaTimer(silenzia) {
+  clearInterval(timerId);
+  timerId = null;
+  $("timerBox").hidden = true;
+  if (silenzia) invia("Z", false);      // ferma anche il buzzer se sta suonando
+}
+function scadutoTimer() {
+  fermaTimer(false);
+  log("Timer scaduto");
+  if (invia("B", false)) mostra("timer", "Scaduto!", "il buzzer sta suonando");
+  else mostra("timer", "Scaduto!", "ESP32 non collegato: nessun suono", true);
 }
 
 /* ===================== VOCE ===================== */
@@ -592,6 +661,7 @@ function fermaCamera() {
 $("btnBt").onclick = () => { if (connesso()) dispositivo.gatt.disconnect(); else collegaEsp32(); };
 $("btnCam").onclick = () => { if (cameraOn) fermaCamera(); else avviaCamera(); };
 $("btnMic").onclick = () => { if (ascolto) fermaMic(); else avviaMic(); };
+$("btnTimerStop").onclick = () => fermaTimer(true);
 $("btnInvia").onclick = () => { eseguiTesto($("testo").value); $("testo").value = ""; };
 $("testo").addEventListener("keydown", e => {
   if (e.key === "Enter") { e.preventDefault(); $("btnInvia").click(); }
