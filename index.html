@@ -164,8 +164,6 @@
 "use strict";
 
 /* ===================== CONFIGURAZIONE ===================== */
-const INVERTI_SX_DX = false;   // metti true se sinistra e destra risultano scambiate
-const SOGLIA_POLLICE = 0.6;
 const CONFERMA_FRAME = 3;      // un gesto deve durare 3 immagini di fila
 const HEARTBEAT_MS = 150;      // ogni quanto ripetere il gesto all'ESP32
 const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
@@ -469,8 +467,7 @@ function parla(testo) {
 
 /* ===================== GESTI DELLA MANO ===================== */
 const NOMI_GESTI = {
-  P: "Pugno", A: "Mano aperta", L: "Pollice a sinistra",
-  R: "Pollice a destra", U: "Dito al cielo: STOP", N: "Nessun gesto"
+  P: "Pugno", A: "Mano aperta", U: "Dito al cielo: STOP", N: "Nessun gesto"
 };
 const COLLEGAMENTI_MANO = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
   [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
@@ -486,16 +483,7 @@ function riconosci(p) {
     if (dy < 0 && Math.abs(dy) > Math.abs(dx)) return "U";
   }
   if (indice && medio && anulare && mignolo) return "A";
-  if (!(indice || medio || anulare || mignolo)) {
-    const dim = d(p[0], p[9]);
-    const dx = p[4][0] - p[2][0], dy = p[4][1] - p[2][1];
-    if (Math.abs(dx) > SOGLIA_POLLICE * dim && Math.abs(dx) > Math.abs(dy)) {
-      let sinistra = dx < 0;
-      if (INVERTI_SX_DX) sinistra = !sinistra;
-      return sinistra ? "L" : "R";
-    }
-    return "P";
-  }
+  if (!(indice || medio || anulare || mignolo)) return "P";
   return "N";
 }
 
